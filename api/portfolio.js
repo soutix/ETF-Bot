@@ -19,13 +19,16 @@ module.exports = async function handler(req, res) {
 
   try {
     // Fetch in parallel to minimise latency
-    const [account, positions, state, marketStatus, equityHistory] = await Promise.all([
+    const [account, positions, rawState, marketStatus, equityHistory] = await Promise.all([
       alpaca.getAccount(),
       alpaca.getPositionsMap(),
-      sheets.getState(),
+      sheets.getState().catch(() => null),
       checkMarketOpen(),
       sheets.getEquityHistory().catch(() => []),
     ]);
+
+    // Default empty state if Sheets has never been written to
+    const state = rawState || {};
 
     const portfolioValue = parseFloat(account.portfolio_value);
     const cash           = parseFloat(account.cash);
