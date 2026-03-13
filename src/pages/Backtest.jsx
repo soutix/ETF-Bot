@@ -165,8 +165,8 @@ export default function Backtest() {
                   formatter={(v, n) => [usd(v, 0), n === 'strategie' ? 'Dual Momentum' : 'SPY B&H']} />
                 <Legend formatter={v => v === 'strategie' ? 'Dual Momentum' : 'SPY buy-and-hold'}
                   wrapperStyle={{ fontSize:12 }} />
-                <Line type="monotone" dataKey="strategie"  stroke="var(--color-text-success)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="benchmark" stroke="var(--color-text-secondary)" strokeWidth={1.5} dot={false} strokeDasharray="5 4" />
+                <Line type="monotone" dataKey="strategie"  stroke="#27AE60" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="benchmark" stroke="#95A5A6" strokeWidth={1.5} dot={false} strokeDasharray="5 4" />
               </LineChart>
             </ResponsiveContainer>
           </Card>
@@ -180,8 +180,8 @@ export default function Backtest() {
                   tickFormatter={v => `${(v*100).toFixed(0)}%`} width={40} domain={[-1, 0]} />
                 <Tooltip formatter={v => `${(v*100).toFixed(2)}%`}
                   contentStyle={{ background:'var(--color-background-primary)', border:'1px solid var(--color-border-secondary)', borderRadius:8, fontSize:12 }} />
-                <Area type="monotone" dataKey="drawdown" stroke="var(--color-text-danger)"
-                  fill="var(--color-background-danger)" strokeWidth={1.5} dot={false} />
+                <Area type="monotone" dataKey="drawdown" stroke="#E74C3C"
+                  fill="#FADBD8" strokeWidth={1.5} dot={false} />
               </AreaChart>
             </ResponsiveContainer>
           </Card>
