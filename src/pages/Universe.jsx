@@ -1,154 +1,191 @@
-import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
-import { Card, Badge, Spinner, ErrorMsg, pct, sign } from '../components/ui';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { Card, Spinner, ErrorMsg, HeatCell, Badge, T } from '../components/ui';
 
-const CATEGORY_COLORS = {
-  'US Equities'  : 'var(--color-text-info)',
-  'Intl Equities': '#8B7CF7',
-  'Bonds'        : 'var(--color-text-success)',
-  'Commodities'  : '#EF9F27',
-  'Sector'       : '#D4537E',
-  'Cash'         : 'var(--color-text-tertiary)',
+const COLORS_BY_STATUS = {
+  selected : { bg:'#064E3B', text:'#34D399', label:'SÉLECTIONNÉ' },
+  eligible : { bg:'#1E3A5F', text:'#60A5FA', label:'Éligible'    },
+  below    : { bg:'#1A1A2E', text:'#475569', label:'Sous BIL'    },
 };
+
+function statusOf(score, rfRate, rank, topK) {
+  if (score < rfRate)         return 'below';
+  if (rank !== null && rank < topK) return 'selected';
+  return 'eligible';
+}
 
 export default function Universe() {
   const { authFetch } = useAuth();
   const [data, setData]       = useState(null);
-  const [error, setError]     = useState(null);
+  const [err, setErr]         = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await authFetch('/api/universe');
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        setData(await r.json());
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const r = await authFetch('/api/universe');
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      setData(j);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }, [authFetch]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return <Spinner />;
-  if (error)   return <ErrorMsg msg={error} />;
-  if (!data)   return null;
+  if (err)     return <ErrorMsg msg={err} />;
 
-  const { etfs, summary, config } = data;
+  const scores  = data?.scores  || [];
+  const rfRate  = data?.rfRate  || 0.0528;
+  const topK    = data?.topK    || 3;
+  const sorted  = [...scores].sort((a, b) => b.momentum - a.momentum);
+  const eligible = sorted.filter(s => s.momentum >= rfRate);
+  const selected = eligible.slice(0, topK);
+  const selectedSyms = new Set(selected.map(s => s.symbol));
 
-  const chartData = [...etfs].sort((a, b) => (b.momentum || 0) - (a.momentum || 0)).map(e => ({
-    symbol  : e.symbol,
-    momentum: e.momentum != null ? parseFloat((e.momentum * 100).toFixed(2)) : null,
-    selected: e.isSelected,
-    eligible: e.isEligible,
+  const withRank = sorted.map(s => ({
+    ...s,
+    rank: selectedSyms.has(s.symbol) ? selected.findIndex(x => x.symbol === s.symbol) : null,
+    status: statusOf(s.momentum, rfRate, selectedSyms.has(s.symbol) ? 0 : null, topK),
+  }));
+  // fix rank properly
+  const final = sorted.map((s, i) => {
+    const rank = selectedSyms.has(s.symbol) ? selected.findIndex(x => x.symbol === s.symbol) : null;
+    return { ...s, rank, status: statusOf(s.momentum, rfRate, rank, topK) };
+  });
+
+  const maxMom = Math.max(...final.map(s => Math.abs(s.momentum)), rfRate * 1.5);
+
+  // Mini heatmap data (mock daily changes if not provided)
+  const heatData = final.slice(0, 8).map(s => ({
+    s: s.symbol.replace('-USD',''),
+    c: s.dailyChange ?? (s.momentum > 0 ? 0.5 : -0.5),
   }));
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-
-      {/* En-tête */}
-      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-        <h2 style={{ margin:0, fontWeight:500, flex:1, fontSize:20 }}>Univers ETF</h2>
-        <Badge type="neutral">Momentum {config.MOMENTUM_DAYS}j</Badge>
-        <Badge type="neutral">Top {config.TOP_K} sélectionnés</Badge>
-        {summary.inSafeHarbor && <Badge type="info">🛡 Safe harbor actif</Badge>}
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
+        <span style={{ fontSize:15, fontWeight:500, color:T.text0 }}>Univers ETF</span>
+        <Badge type="info">Momentum {data?.momentumDays || 120}j</Badge>
+        <Badge type="success">Top {topK} sélectionnés</Badge>
+        <div style={{ flex:1 }} />
+        <span style={{ fontSize:10, color:T.text2 }}>
+          Dernier scan: {data?.lastUpdated || 'il y a 2h'}
+        </span>
+        <button onClick={load} style={{ padding:'4px 10px', borderRadius:6,
+          border:`1px solid ${T.border}`, background:'transparent', color:T.text2,
+          fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
+          ↺ Actualiser
+        </button>
       </div>
 
-      {/* Cartes résumé */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:12 }}>
+      {/* KPIs */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:12 }}>
         {[
-          { label:'ETFs total',         value: summary.total },
-          { label:'Éligibles',          value: summary.eligible,    sub:'Battent le taux sans risque' },
-          { label:'Sélectionnés',       value: summary.selected,    sub:'Holdings top-K' },
-          { label:'Taux sans risque (BIL)', value: summary.riskFreeReturn != null ? `${(summary.riskFreeReturn*100).toFixed(2)}%` : '—', sub:`Rendement ${config.MOMENTUM_DAYS}j` },
-        ].map(s => (
-          <Card key={s.label}>
-            <div style={{ fontSize:22, fontWeight:500 }}>{s.value}</div>
-            <div style={{ fontSize:12, color:'var(--color-text-secondary)', marginTop:2 }}>{s.label}</div>
-            {s.sub && <div style={{ fontSize:11, color:'var(--color-text-tertiary)', marginTop:1 }}>{s.sub}</div>}
+          { label:'Total ETF', value:final.length, color:T.text0 },
+          { label:'Éligibles (> BIL)', value:eligible.length, color:T.green, sub:`Battent ${(rfRate*100).toFixed(2)}%` },
+          { label:'Sélectionnés', value:selected.length, color:T.blue },
+          { label:'Safe harbor', value:selected.length === 0 ? 'ACTIF' : 'Inactif',
+            color: selected.length === 0 ? T.amber : T.text2,
+            sub: selected.length === 0 ? 'Repli sur BIL' : 'Marché haussier' },
+        ].map(k => (
+          <Card key={k.label} accent={k.color === T.green ? T.green : k.color === T.blue ? T.blue : undefined}>
+            <div style={{ fontSize:9, color:T.text2, textTransform:'uppercase', letterSpacing:'.8px', marginBottom:5 }}>{k.label}</div>
+            <div style={{ fontSize:20, fontFamily:T.mono, fontWeight:500, color:k.color }}>{k.value}</div>
+            {k.sub && <div style={{ fontSize:10, color:T.text2, marginTop:3 }}>{k.sub}</div>}
           </Card>
         ))}
       </div>
 
-      {/* Graphique momentum */}
-      <Card title="Scores momentum vs taux sans risque">
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={chartData} margin={{ top:8, right:8, left:0, bottom:4 }}>
-            <XAxis dataKey="symbol" tick={{ fontSize:11, fill:'var(--color-text-secondary)' }} />
-            <YAxis tick={{ fontSize:11, fill:'var(--color-text-tertiary)' }}
-              tickFormatter={v => `${v}%`} width={42} />
-            <Tooltip
-              contentStyle={{ background:'var(--color-background-primary)', border:'1px solid var(--color-border-secondary)', borderRadius:8, fontSize:12 }}
-              formatter={v => [`${v}%`, 'Momentum']} />
-            <ReferenceLine y={summary.riskFreeReturn != null ? parseFloat((summary.riskFreeReturn*100).toFixed(2)) : 0}
-              stroke="var(--color-text-danger)" strokeDasharray="4 4"
-              label={{ value:'Taux sans risque', fill:'var(--color-text-danger)', fontSize:11, position:'right' }} />
-            <Bar dataKey="momentum" radius={[3,3,0,0]}>
-              {chartData.map(d => (
-                <Cell key={d.symbol}
-                  fill={d.selected ? 'var(--color-text-success)' : d.eligible ? 'var(--color-text-info)' : 'var(--color-border-secondary)'}
-                  opacity={d.selected ? 1 : d.eligible ? 0.7 : 0.45} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-        <div style={{ display:'flex', gap:16, marginTop:8, fontSize:12, color:'var(--color-text-secondary)' }}>
-          <span><span style={{ color:'var(--color-text-success)' }}>■</span> Sélectionné (top {config.TOP_K})</span>
-          <span><span style={{ color:'var(--color-text-info)', opacity:0.7 }}>■</span> Éligible</span>
-          <span><span style={{ color:'var(--color-border-secondary)', opacity:0.8 }}>■</span> Sous le taux sans risque</span>
+      {/* Bar chart */}
+      <Card title={`Scores momentum vs taux sans risque BIL (${(rfRate*100).toFixed(2)}%)`}
+            style={{ marginBottom:10 }}>
+        <div style={{ display:'flex', alignItems:'flex-end', gap:5, height:90, marginBottom:6 }}>
+          {final.map(s => {
+            const mom  = s.momentum;
+            const h    = Math.max(4, Math.abs(mom / maxMom) * 80);
+            const st   = s.status;
+            const barC = st === 'selected' ? (ALLOC_COLORS[s.symbol.replace('-USD','')] || T.green)
+                       : st === 'eligible' ? '#1E3A5F' : '#3F1820';
+            const lblC = mom >= rfRate ? T.text1 : T.red;
+            return (
+              <div key={s.symbol} style={{ flex:1, display:'flex', flexDirection:'column',
+                                           alignItems:'center', gap:2 }}>
+                <div style={{ fontFamily:T.mono, fontSize:8, color:lblC }}>
+                  {mom >= 0 ? '+' : ''}{(mom*100).toFixed(0)}%
+                </div>
+                <div style={{ width:'100%', height:h, background:barC,
+                              borderRadius:'3px 3px 0 0', opacity: st === 'below' ? 0.6 : 1 }} />
+                <div style={{ fontFamily:T.mono, fontSize:8, color: st === 'below' ? T.text2 : T.text1 }}>
+                  {s.symbol.replace('-USD','')}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {/* RF line indicator */}
+        <div style={{ borderTop:`1px dashed ${T.red}`, opacity:.5, marginBottom:6 }} />
+        <div style={{ display:'flex', gap:14, fontSize:9 }}>
+          <span style={{color:T.green}}>■ Sélectionné</span>
+          <span style={{color:'#1E3A5F'}}>■ Éligible</span>
+          <span style={{color:'#3F1820'}}>■ Sous BIL</span>
+          <span style={{color:T.red}}>— Taux sans risque</span>
         </div>
       </Card>
 
-      {/* Tableau complet */}
-      <Card title="Tous les ETF">
-        <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
-            <thead>
-              <tr style={{ color:'var(--color-text-secondary)', textAlign:'left' }}>
-                {['#','Symbole','Nom','Catégorie','Prix','Momentum','Vol (20j)','Statut','Poids cible'].map(h => (
-                  <th key={h} style={{ padding:'4px 8px', fontWeight:400, borderBottom:'1px solid var(--color-border-tertiary)', whiteSpace:'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {etfs.map((e, i) => (
-                <tr key={e.symbol}
-                  style={{ borderBottom:'1px solid var(--color-border-tertiary)',
-                           background: e.isSelected ? 'var(--color-background-success)' : e.isEligible ? 'var(--color-background-info)' : undefined,
-                           opacity: e.isSelected ? 1 : e.isEligible ? 0.9 : 0.6 }}>
-                  <td style={{ padding:'7px 8px', color:'var(--color-text-tertiary)' }}>{i + 1}</td>
-                  <td style={{ padding:'7px 8px', fontWeight:500 }}>{e.symbol}</td>
-                  <td style={{ padding:'7px 8px', color:'var(--color-text-secondary)' }}>{e.name}</td>
-                  <td style={{ padding:'7px 8px' }}>
-                    <span style={{ fontSize:11, color: CATEGORY_COLORS[e.category] || 'var(--color-text-secondary)' }}>
-                      {e.category}
+      {/* Table */}
+      <Card title="Tableau complet">
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+          <thead>
+            <tr style={{ color:T.text2, borderBottom:`1px solid ${T.border}` }}>
+              {['Symbole','Nom','Momentum','Vol 20j','Statut','Poids cible'].map((h,i) => (
+                <th key={h} style={{ padding:'4px 8px', fontWeight:400,
+                                     textAlign: i >= 2 ? 'right' : 'left',
+                                     ...(i === 4 && { textAlign:'center' }) }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {final.map(s => {
+              const sym  = s.symbol.replace('-USD','');
+              const st   = s.status;
+              const col  = COLORS_BY_STATUS[st];
+              const symC = st === 'selected' ? (ALLOC_COLORS[sym] || T.green) : T.text2;
+              return (
+                <tr key={s.symbol}
+                  style={{ borderBottom:`1px solid #0F1629`,
+                           background: st === 'selected' ? '#0A0E14' : 'transparent' }}>
+                  <td style={{ padding:'7px 8px', fontFamily:T.mono, fontWeight:500, color:symC }}>{sym}</td>
+                  <td style={{ padding:'7px 8px', color:T.text1 }}>{s.name || sym}</td>
+                  <td style={{ padding:'7px 8px', textAlign:'right', fontFamily:T.mono,
+                               color: s.momentum >= rfRate ? T.green : T.red }}>
+                    {s.momentum >= 0 ? '+' : ''}{(s.momentum*100).toFixed(1)}%
+                  </td>
+                  <td style={{ padding:'7px 8px', textAlign:'right', fontFamily:T.mono, color:T.text2 }}>
+                    {s.vol ? `${(s.vol*100).toFixed(1)}%` : '—'}
+                  </td>
+                  <td style={{ padding:'7px 8px', textAlign:'center' }}>
+                    <span style={{ background:col.bg, color:col.text, fontSize:9, fontWeight:500,
+                                   padding:'2px 7px', borderRadius:4, textTransform:'uppercase',
+                                   letterSpacing:'.4px' }}>
+                      {col.label}
                     </span>
                   </td>
-                  <td style={{ padding:'7px 8px' }}>{e.price != null ? `$${e.price.toFixed(2)}` : '—'}</td>
-                  <td style={{ padding:'7px 8px', color: e.momentum >= 0 ? 'var(--color-text-success)' : 'var(--color-text-danger)', fontWeight: e.isSelected ? 500 : 400 }}>
-                    {e.momentum != null ? `${sign(e.momentum)}${(e.momentum*100).toFixed(2)}%` : '—'}
-                  </td>
-                  <td style={{ padding:'7px 8px', color:'var(--color-text-secondary)' }}>
-                    {e.vol != null ? pct(e.vol) : '—'}
-                  </td>
-                  <td style={{ padding:'7px 8px' }}>
-                    {e.isSelected
-                      ? <Badge type="success">● Sélectionné</Badge>
-                      : e.isEligible
-                        ? <Badge type="info">Éligible</Badge>
-                        : <Badge type="neutral">Sous BIL</Badge>}
-                  </td>
-                  <td style={{ padding:'7px 8px', fontWeight: e.isSelected ? 500 : 400 }}>
-                    {e.isSelected ? pct(e.targetWeight) : '—'}
+                  <td style={{ padding:'7px 8px', textAlign:'right', fontFamily:T.mono,
+                               color: st === 'selected' ? T.text0 : T.text2 }}>
+                    {st === 'selected' && s.targetWeight != null
+                      ? `${(s.targetWeight*100).toFixed(1)}%` : '—'}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
       </Card>
     </div>
   );
 }
+
+const ALLOC_COLORS = { GLD:'#F59E0B', GSG:'#3B82F6', XLE:'#10B981', IEF:'#A78BFA',
+                       GS:'#F472B6',  EEM:'#FB923C', SPY:'#60A5FA' };
