@@ -1,0 +1,59 @@
+name: ETF Bot — Weekly Rebalance
+
+on:
+  # Monday 13:35 UTC = 09:35 ET (5 minutes after NYSE open)
+  # This gives the market time to settle before we trade.
+  schedule:
+    - cron: '35 13 * * 1'
+
+  # Allow manual trigger from GitHub UI (useful for testing or forced rebalance)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force rebalance (bypass day/drift checks)?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  rebalance:
+    name: Run ETF Rebalance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger rebalance
+        run: |
+          FORCE="${{ github.event.inputs.force || 'false' }}"
+          URL="${{ secrets.VERCEL_URL }}/api/rebalance"
+          if [ "$FORCE" = "true" ]; then
+            URL="${URL}?force=true"
+          fi
+
+          echo "POSTing to $URL"
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response:"
+          echo "$BODY" | python3 -m json.tool 2>/dev/null || echo "$BODY"
+
+          # Exit with error if HTTP status is not 2xx
+          if [[ "$HTTP_CODE" -lt 200 || "$HTTP_CODE" -ge 300 ]]; then
+            echo "ERROR: Rebalance failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+          # Check if the response contains an error field
+          if echo "$BODY" | grep -q '"error"'; then
+            echo "ERROR: Response contains error field"
+            exit 1
+          fi
+
+          echo "Rebalance completed successfully."
