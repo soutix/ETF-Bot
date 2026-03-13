@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import { Card, Badge, Spinner, ErrorMsg, pct, sign } from '../components/ui';
+import { useAuth } from '../context/AuthContext';
 
 const CATEGORY_COLORS = {
   'US Equities'  : 'var(--color-text-info)',
@@ -12,14 +13,15 @@ const CATEGORY_COLORS = {
 };
 
 export default function Universe() {
-  const [data, setData]     = useState(null);
-  const [error, setError]   = useState(null);
+  const { authFetch } = useAuth();
+  const [data, setData]       = useState(null);
+  const [error, setError]     = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch('/api/universe');
+        const r = await authFetch('/api/universe');
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         setData(await r.json());
       } catch (e) {
@@ -36,7 +38,6 @@ export default function Universe() {
 
   const { etfs, summary, config } = data;
 
-  // Bar chart data — sorted by momentum desc
   const chartData = [...etfs].sort((a, b) => (b.momentum || 0) - (a.momentum || 0)).map(e => ({
     symbol  : e.symbol,
     momentum: e.momentum != null ? parseFloat((e.momentum * 100).toFixed(2)) : null,
@@ -47,21 +48,21 @@ export default function Universe() {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
 
-      {/* Header */}
+      {/* En-tête */}
       <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-        <h2 style={{ margin:0, fontWeight:500, flex:1, fontSize:20 }}>Universe scores</h2>
-        <Badge type="neutral">{config.MOMENTUM_DAYS}d momentum</Badge>
-        <Badge type="neutral">Top {config.TOP_K} selected</Badge>
-        {summary.inSafeHarbor && <Badge type="info">🛡 In safe harbor</Badge>}
+        <h2 style={{ margin:0, fontWeight:500, flex:1, fontSize:20 }}>Univers ETF</h2>
+        <Badge type="neutral">Momentum {config.MOMENTUM_DAYS}j</Badge>
+        <Badge type="neutral">Top {config.TOP_K} sélectionnés</Badge>
+        {summary.inSafeHarbor && <Badge type="info">🛡 Safe harbor actif</Badge>}
       </div>
 
-      {/* Summary cards */}
+      {/* Cartes résumé */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:12 }}>
         {[
-          { label:'Total ETFs',    value: summary.total },
-          { label:'Eligible',      value: summary.eligible,    sub:'Beat risk-free rate' },
-          { label:'Selected',      value: summary.selected,    sub:'Top-K holdings' },
-          { label:'Risk-free rate (BIL)', value: summary.riskFreeReturn != null ? `${(summary.riskFreeReturn*100).toFixed(2)}%` : '—', sub:`${config.MOMENTUM_DAYS}d return` },
+          { label:'ETFs total',         value: summary.total },
+          { label:'Éligibles',          value: summary.eligible,    sub:'Battent le taux sans risque' },
+          { label:'Sélectionnés',       value: summary.selected,    sub:'Holdings top-K' },
+          { label:'Taux sans risque (BIL)', value: summary.riskFreeReturn != null ? `${(summary.riskFreeReturn*100).toFixed(2)}%` : '—', sub:`Rendement ${config.MOMENTUM_DAYS}j` },
         ].map(s => (
           <Card key={s.label}>
             <div style={{ fontSize:22, fontWeight:500 }}>{s.value}</div>
@@ -71,8 +72,8 @@ export default function Universe() {
         ))}
       </div>
 
-      {/* Momentum bar chart */}
-      <Card title="Momentum scores vs risk-free rate">
+      {/* Graphique momentum */}
+      <Card title="Scores momentum vs taux sans risque">
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={chartData} margin={{ top:8, right:8, left:0, bottom:4 }}>
             <XAxis dataKey="symbol" tick={{ fontSize:11, fill:'var(--color-text-secondary)' }} />
@@ -82,7 +83,8 @@ export default function Universe() {
               contentStyle={{ background:'var(--color-background-primary)', border:'1px solid var(--color-border-secondary)', borderRadius:8, fontSize:12 }}
               formatter={v => [`${v}%`, 'Momentum']} />
             <ReferenceLine y={summary.riskFreeReturn != null ? parseFloat((summary.riskFreeReturn*100).toFixed(2)) : 0}
-              stroke="var(--color-text-danger)" strokeDasharray="4 4" label={{ value:'Risk-free', fill:'var(--color-text-danger)', fontSize:11, position:'right' }} />
+              stroke="var(--color-text-danger)" strokeDasharray="4 4"
+              label={{ value:'Taux sans risque', fill:'var(--color-text-danger)', fontSize:11, position:'right' }} />
             <Bar dataKey="momentum" radius={[3,3,0,0]}>
               {chartData.map(d => (
                 <Cell key={d.symbol}
@@ -93,19 +95,19 @@ export default function Universe() {
           </BarChart>
         </ResponsiveContainer>
         <div style={{ display:'flex', gap:16, marginTop:8, fontSize:12, color:'var(--color-text-secondary)' }}>
-          <span><span style={{ color:'var(--color-text-success)' }}>■</span> Selected (top {config.TOP_K})</span>
-          <span><span style={{ color:'var(--color-text-info)', opacity:0.7 }}>■</span> Eligible</span>
-          <span><span style={{ color:'var(--color-border-secondary)', opacity:0.8 }}>■</span> Below risk-free</span>
+          <span><span style={{ color:'var(--color-text-success)' }}>■</span> Sélectionné (top {config.TOP_K})</span>
+          <span><span style={{ color:'var(--color-text-info)', opacity:0.7 }}>■</span> Éligible</span>
+          <span><span style={{ color:'var(--color-border-secondary)', opacity:0.8 }}>■</span> Sous le taux sans risque</span>
         </div>
       </Card>
 
-      {/* Full table */}
-      <Card title="All ETFs">
+      {/* Tableau complet */}
+      <Card title="Tous les ETF">
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
             <thead>
               <tr style={{ color:'var(--color-text-secondary)', textAlign:'left' }}>
-                {['#','Symbol','Name','Category','Price','Momentum','Vol (20d)','Status','Weight'].map(h => (
+                {['#','Symbole','Nom','Catégorie','Prix','Momentum','Vol (20j)','Statut','Poids cible'].map(h => (
                   <th key={h} style={{ padding:'4px 8px', fontWeight:400, borderBottom:'1px solid var(--color-border-tertiary)', whiteSpace:'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -133,10 +135,10 @@ export default function Universe() {
                   </td>
                   <td style={{ padding:'7px 8px' }}>
                     {e.isSelected
-                      ? <Badge type="success">● Selected</Badge>
+                      ? <Badge type="success">● Sélectionné</Badge>
                       : e.isEligible
-                        ? <Badge type="info">Eligible</Badge>
-                        : <Badge type="neutral">Below BIL</Badge>}
+                        ? <Badge type="info">Éligible</Badge>
+                        : <Badge type="neutral">Sous BIL</Badge>}
                   </td>
                   <td style={{ padding:'7px 8px', fontWeight: e.isSelected ? 500 : 400 }}>
                     {e.isSelected ? pct(e.targetWeight) : '—'}
